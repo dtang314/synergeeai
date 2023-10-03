@@ -1,0 +1,58 @@
+import os
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from google.cloud import storage
+import json
+
+# Set up GCP credentials
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\short\\Desktop\\synergeeai\\project-synergee-c8bef3cc9d34.json"
+
+# Initialize the GCP storage client and get the bucket
+client = storage.Client()
+bucket = client.get_bucket('jeffnippardtranscription')
+
+# Read files from the bucket
+blobs = bucket.list_blobs(prefix='labeled_transcripts/')
+transcripts = []
+file_names = []
+for blob in blobs:
+    content = blob.download_as_text()
+    data = json.loads(content)
+    transcript_text = ' '.join([entry['text'] for entry in data['transcript']])
+    transcripts.append(transcript_text)
+    file_names.append(blob.name)
+
+# TF-IDF Vectorization
+vectorizer = TfidfVectorizer(stop_words='english')
+X = vectorizer.fit_transform(transcripts)
+
+# Determine the best number of clusters using silhouette score
+best_n = 5
+best_score = -1
+for n_clusters in range(5, 11): 
+    kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=0).fit(X)
+    silhouette_avg = silhouette_score(X, kmeans.labels_)
+    if silhouette_avg > best_score:
+        best_score = silhouette_avg
+        best_n = n_clusters
+
+# Fit KMeans with the best number of clusters
+kmeans = KMeans(n_clusters=best_n, n_init=10, random_state=0).fit(X)
+
+# Create folders and save transcripts
+base_path = os.getcwd()
+cluster_path = os.path.join(base_path, 'clusters')
+if not os.path.exists(cluster_path):
+    os.mkdir(cluster_path)
+
+for idx, label in enumerate(kmeans.labels_):
+    folder_path = os.path.join(cluster_path, f'cluster_{label}')
+    if not os.path.exists(folder_path):
+        os.mkdir(folder_path)
+    
+    file_path = os.path.join(folder_path, os.path.basename(file_names[idx]))
+    with open(file_path, 'w') as f:
+        f.write(transcripts[idx])
+
+print(f"Transcripts have been sorted into {best_n} clusters and saved in the 'clusters' subfolder.")
